@@ -1,0 +1,17 @@
+{
+  "name": "hostyl",
+  "version": "1.0.0",
+  "description": "A custom easy to use and rollback hosts file for each of your projects.",
+  "main": "index.js",
+  "repository": "https://github.com/Hedronium/hostyl",
+  "author": "Omran Jamal <o.jamal97@gmail.com>",
+  "license": "MIT",
+  "dependencies": {
+    "ip": "^1.1.5",
+    "is-root": "^2.0.0",
+    "minimist": "^1.2.0"
+  },
+  "bin": {
+    "hostyl": "./src/hostyl"
+  }
+}

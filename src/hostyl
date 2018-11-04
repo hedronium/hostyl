@@ -1,0 +1,229 @@
+#!/usr/bin/env node
+const getActive = require('./getActive');
+const getLocal = require('./getLocal');
+const isEngaged = require('./isEngaged');
+const isRoot = require('is-root');
+const fs = require('fs');
+const ip = require('ip');
+
+
+const argv = require('minimist')(process.argv.slice(2));
+const isHelp = !!argv.h || !!argv.help || argv._.length === 0;
+let filename = null;
+
+const hostname_patt = /^(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9])\.)*([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9\-]*[A-Za-z0-9])$/;
+
+const resFile = () => {
+    let name = argv.f || argv.file;
+
+    if (!name || typeof name !== 'string') {
+        name = 'project.hosts';
+
+    }
+
+    filename = name;
+};
+
+const [command, op_a, op_b] = argv._;
+
+
+const commands = {
+    'up': () => {
+        if (!isRoot()) {
+            console.warn(`You need to execute as root.`);
+            return;
+        }
+
+        resFile();
+
+        if (isEngaged()) {
+            console.log(`A hostyl environment is already active.\nDeactivating.`);
+            commands.down();
+        }
+
+        const local = getLocal(filename);
+
+        let file = [
+            '#--WANRING: HOSTYL ENVIRONMENT'
+        ];
+
+        file = file.concat(
+            fs.readFileSync('/etc/hosts', {encoding: 'utf8'})
+                .split('\n')
+                .map(line => `#${line}`)
+        ).concat(['', '']);
+
+        Object.keys(local).forEach(host => {
+            file.push(`${local[host]}    ${host}`);
+        });
+
+        fs.writeFileSync('/etc/hosts', file.join('\n')+'\n');
+        console.info('Hostyl host file has been applied.\n\nTo Disable:\n    hostyl down');
+    },
+    'down': () => {
+        if (!isRoot()) {
+            console.warn(`You need to execute as root.`);
+            return;
+        }
+
+        resFile();
+
+        if (!isEngaged()) {
+            console.warn(`No hostyl environment is active.\nNo action taken.`);
+            return;
+        }
+
+        let file = fs.readFileSync('/etc/hosts', {encoding: 'utf8'})
+                .split('\n')
+                .slice(1)
+                .filter(line => line[0] === '#')
+                .map(line => line.substr(1))
+
+        fs.writeFileSync('/etc/hosts', file.join('\n')+'\n');
+        console.info(`hostyl environment has been disengaged.`);
+    },
+    'status': () => {
+        console.info(`STATUS: ${isEngaged() ? 'ACTIVE' : 'INACTIVE'}`);
+    },
+    'set': () => {
+        resFile();
+
+        if (!op_a) {
+            console.warn(`Please provide a value for Host.\n\n    hostyl <host> <ip> ${filename !== 'project.hosts' ? '--file='+filename : ''}`);
+            return;
+        }
+        
+        if (!op_b) {
+            console.warn(`Please provide a value for IP.\n\n    hostyl ${op_a} <ip> ${filename !== 'project.hosts' ? '--file='+filename : ''}`);
+            return;
+        }
+
+        const lfile = `${process.cwd()}/${filename}`;
+        const local = getLocal(filename);
+
+        if (!hostname_patt.test(op_a)) {
+            console.error(`${op_a} is not a valid hostname`);
+            return;
+        }
+
+        if (!ip.isV4Format(op_b) && !ip.isV6Format(op_b)) {
+            console.error(`${op_b} is not a valid address`);
+            return;
+        }
+
+        local[op_a] = op_b;
+
+        try {
+            fs.writeFileSync(lfile, JSON.stringify(ready, null, '\t'));
+            console.info('Set.');
+        } catch (e) {
+            console.error(`Could not write to file.\nDo you have permissions to this directory\nor file?`);
+        }
+
+
+        commands.list();
+    },
+    'remove': () => {
+        resFile();
+        
+        if (!op_a) {
+            console.warn(`Please provide a value for Host.\n\n    hostyl <host> <ip> ${filename !== 'project.hosts' ? '--file='+filename : ''}`);
+            return;
+        }
+
+        if (!hostname_patt.test(op_a)) {
+            console.error(`${op_a} is not a valid hostname`);
+            return;
+        }
+        
+        const local = getLocal(filename);
+
+        if (!(op_a in local)) {
+            console.warn(`${op_a} is not present.\nNo action taken.`);
+            return;
+        }
+
+        delete local[op_a];
+        const lfile = `${process.cwd()}/${filename}`;
+
+
+        try {
+            fs.writeFileSync(lfile, JSON.stringify(ready, null, '\t'));
+            console.info('Removed.');
+        } catch (e) {
+            console.error(`Could not write to file.\nDo you have permissions to this directory or file?`);
+        }
+
+        commands.list();
+    },
+    'list': () => {
+        resFile();
+
+        const actives = [];
+
+        const locals = getLocal(filename);
+        Object.keys(locals).forEach(key => {
+            actives.push({
+                host: key,
+                ip: locals[key]
+            });
+        });
+
+        const max_len = Math.max(...actives.map(pair => pair.host.length));
+
+        const map = actives.map(
+            pair => `${Array(max_len - pair.host.length + 4).fill(' ').join('')}${pair.host}    →    ${pair.ip}`
+        ).join('\n');
+
+        console.info(`${map}`);
+    },
+    'view': () => {
+        const actives = getActive();
+        const max_len = Math.max(...actives.map(pair => pair.host.length));
+
+        const map = actives.map(
+            pair => `${Array(max_len - pair.host.length + 4).fill(' ').join('')}${pair.host}    →    ${pair.ip}`
+        ).join('\n');
+
+        console.info(`${map}`);
+    },
+    'help': () => {
+        console.info(require('./helptext'));
+    }
+};
+
+(() => {
+    if (!fs.existsSync('/etc/hosts')) {
+        console.error(`/etc/hosts not found. \nAre you sure you are on a UNIX-like platform?`);
+        return;
+    }
+
+    if (argv._.length > 3) {
+        console.error(`Too many arguments. There can be at max 3. \n\n    hostyl <command> [<host> [<ip>]]`);
+        return;
+    }
+
+    const unreced = Object.keys(argv).filter(key => !['_', 'h', 'help'].includes(key));
+
+    if (unreced.length > 0) {
+        console.warn(`Unrecognized parameter --${unreced[0]}`);
+        return;
+    }
+
+    if (isHelp) {
+        commands.help();
+        return;
+    }
+
+    if (!command) {
+        console.warn(`You must specify a command. \n\nExample: hostyl <command> [<host> [<ip>]]`);
+        return;
+    }
+
+    if (!Object.keys(commands).includes(command)) {
+        console.warn(`Unrecognized command.\n\nCan be one of:\n\n${Object.keys(commands).join('\n')}`);
+        return;
+    }
+
+    commands[command]();
+})();
